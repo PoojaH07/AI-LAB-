@@ -1,0 +1,227 @@
+from __future__ import annotations
+from typing import Dict, Union, List, Tuple, Optional
+import re
+
+# --- Term classes ---------------------------------------------------------
+class Term:
+    def substitute(self, subst: Dict["Variable", "Term"]) -> "Term":
+        raise NotImplementedError
+
+    def vars(self) -> set:
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        raise NotImplementedError
+
+    def __repr__(self):
+        raise NotImplementedError
+
+
+class Variable(Term):
+    def __init__(self, name: str):
+        self.name = name
+
+    def substitute(self, subst: Dict["Variable", Term]) -> Term:
+        return subst.get(self, self)
+
+    def vars(self) -> set:
+        return {self}
+
+    def __eq__(self, other):
+        return isinstance(other, Variable) and self.name == other.name
+
+    def __hash__(self):
+        return hash(("Variable", self.name))
+
+    def __repr__(self):
+        return self.name
+
+
+class Constant(Term):
+    def __init__(self, name: str):
+        self.name = name
+
+    def substitute(self, subst: Dict[Variable, Term]) -> Term:
+        return self
+
+    def vars(self) -> set:
+        return set()
+
+    def __eq__(self, other):
+        return isinstance(other, Constant) and self.name == other.name
+
+    def __hash__(self):
+        return hash(("Constant", self.name))
+
+    def __repr__(self):
+        return self.name
+
+
+class Function(Term):
+    def __init__(self, name: str, args: List[Term]):
+        self.name = name
+        self.args = args
+
+    def substitute(self, subst: Dict[Variable, Term]) -> Term:
+        return Function(self.name, [a.substitute(subst) for a in self.args])
+
+    def vars(self) -> set:
+        s = set()
+        for a in self.args:
+            s |= a.vars()
+        return s
+
+    def __eq__(self, other):
+        return (isinstance(other, Function)
+                and self.name == other.name
+                and len(self.args) == len(other.args)
+                and all(a == b for a, b in zip(self.args, other.args)))
+
+    def __hash__(self):
+        return hash(("Function", self.name, tuple(self.args)))
+
+    def __repr__(self):
+        if not self.args:
+            return self.name
+        return f"{self.name}({', '.join(map(repr, self.args))})"
+
+
+# --- Parser ---------------------------------------------------------------
+TOKEN_RE = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*|\(|\)|,)")
+
+def tokenize(s: str) -> List[str]:
+    tokens = [m.group(1) for m in TOKEN_RE.finditer(s)]
+    joined = ''.join(tokens)
+    if ''.join(ch for ch in s if not ch.isspace()) != joined:
+        raise ValueError("Failed to tokenize input string: contains invalid characters")
+    return tokens
+
+
+class Parser:
+    def __init__(self, tokens: List[str]):
+        self.tokens = tokens
+        self.i = 0
+
+    def peek(self) -> Optional[str]:
+        return self.tokens[self.i] if self.i < len(self.tokens) else None
+
+    def consume(self, expected: Optional[str] = None) -> str:
+        t = self.peek()
+        if t is None:
+            raise ValueError("Unexpected end of input")
+        if expected is not None and t != expected:
+            raise ValueError(f"Expected '{expected}' but found '{t}'")
+        self.i += 1
+        return t
+
+    def parse_term(self) -> Term:
+        name = self.consume()
+        if self.peek() == '(':
+            self.consume('(')
+            args = self.parse_args()
+            self.consume(')')
+            return Function(name, args)
+        else:
+            if name[0].isupper():
+                return Variable(name)
+            else:
+                return Constant(name)
+
+    def parse_args(self) -> List[Term]:
+        args = [self.parse_term()]
+        while self.peek() == ',':
+            self.consume(',')
+            args.append(self.parse_term())
+        return args
+
+
+def parse_term(s: str) -> Term:
+    tokens = tokenize(s)
+    p = Parser(tokens)
+    t = p.parse_term()
+    if p.peek() is not None:
+        raise ValueError("Extra input after term")
+    return t
+
+
+# --- Substitution helpers -------------------------------------------------
+Subst = Dict[Variable, Term]
+
+def apply_subst(term: Term, subst: Subst) -> Term:
+    return term.substitute(subst)
+
+def occurs_check(var: Variable, term: Term, subst: Subst) -> bool:
+    t = apply_subst(term, subst)
+    return var in t.vars()
+
+# --- Unification algorithm (returns MGU) ----------------------------------
+
+def unify(t1: Term, t2: Term, subst: Optional[Subst] = None) -> Optional[Subst]:
+    if subst is None:
+        subst = {}
+    stack: List[Tuple[Term, Term]] = [(t1, t2)]
+
+    while stack:
+        s, t = stack.pop()
+        s = apply_subst(s, subst)
+        t = apply_subst(t, subst)
+
+        if s == t:
+            continue
+
+        if isinstance(s, Variable):
+            if occurs_check(s, t, subst):
+                return None
+            subst[s] = t
+            subst = {v: apply_subst(term, {s: t}) for v, term in subst.items()}
+            continue
+
+        if isinstance(t, Variable):
+            if occurs_check(t, s, subst):
+                return None
+            subst[t] = s
+            subst = {v: apply_subst(term, {t: s}) for v, term in subst.items()}
+            continue
+
+        if isinstance(s, Function) and isinstance(t, Function):
+            if s.name != t.name or len(s.args) != len(t.args):
+                return None
+            for a, b in zip(s.args, t.args):
+                stack.append((a, b))
+            continue
+
+        return None
+
+    changed = True
+    while changed:
+        changed = False
+        for v in list(subst.keys()):
+            new_term = apply_subst(subst[v], subst)
+            if new_term != subst[v]:
+                subst[v] = new_term
+                changed = True
+
+    return subst
+
+# --- Pretty print ---------------------------------------------------------
+
+def subst_to_str(subst: Optional[Subst]) -> str:
+    if subst is None:
+        return "FAIL"
+    if not subst:
+        return "{}"
+    return "{" + ", ".join(f"{v} -> {t}" for v, t in subst.items()) + "}"
+
+# --- User Input -----------------------------------------------------------
+if __name__ == '__main__':
+    print("\nFirst Order Logic Unification ")
+    expr1 = input("\nEnter first expression: ").strip()
+    expr2 = input("Enter second expression: ").strip()
+
+    try:
+        t1 = parse_term(expr1)
+        t2 = parse_term(expr2)
+        res = unify(t1, t2)
+        print(f"\nMost General Unifier (MGU): {subst_to_str(res)}")
+    except Exception as e:
+        print(f"Error: {e}")
