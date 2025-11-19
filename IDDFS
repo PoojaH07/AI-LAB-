@@ -1,0 +1,109 @@
+from copy import deepcopy
+
+# ---------------------------
+# Generate possible moves for 8-puzzle
+# ---------------------------
+def get_neighbors(state):
+    neighbors = []
+    index = state.index(0)  # blank tile position
+    x, y = divmod(index, 3)  # convert to row, column
+
+    # possible moves (up, down, left, right)
+    moves = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    for dx, dy in moves:
+        new_x, new_y = x + dx, y + dy
+        if 0 <= new_x < 3 and 0 <= new_y < 3:
+            new_state = deepcopy(state)
+            new_index = new_x * 3 + new_y
+            # swap blank (0) with the chosen tile
+            new_state[index], new_state[new_index] = new_state[new_index], new_state[index]
+            neighbors.append(new_state)
+    return neighbors
+
+
+# ---------------------------
+# Depth-Limited DFS
+# ---------------------------
+def depth_limited_dfs(node, goal, limit, visited):
+    if node == goal:
+        return [node]  # FOUND → return path
+    if limit == 0:
+        return None  # NOT FOUND (limit reached)
+
+    visited.add(tuple(node))
+
+    for neighbor in get_neighbors(node):
+        if tuple(neighbor) not in visited:
+            path = depth_limited_dfs(neighbor, goal, limit - 1, visited)
+            if path:
+                return [node] + path  # append path as we backtrack
+
+    return None
+
+
+# ---------------------------
+# Iterative Deepening DFS
+# ---------------------------
+def iddfs(start, goal, max_depth=20):
+    depth_limit = 0
+    while depth_limit <= max_depth:
+        print(f"\n🔍 Searching at depth limit: {depth_limit}")
+        visited = set()
+        path = depth_limited_dfs(start, goal, depth_limit, visited)
+
+        if path:
+            print(f"✅ Goal found at depth {depth_limit}!")
+            return path
+
+        depth_limit += 1
+
+    print("❌ Goal not found within depth limit.")
+    return None
+
+
+# ---------------------------
+# Helper function to print board nicely
+# ---------------------------
+def print_board(state):
+    for i in range(0, 9, 3):
+        print(state[i:i+3])
+    print()
+
+
+# ---------------------------
+# Take Input from User
+# ---------------------------
+def take_input(prompt):
+    print(prompt)
+    nums = []
+    for i in range(3):
+        row = input(f"Enter row {i+1} (3 numbers separated by space, use 0 for blank): ").split()
+        nums.extend([int(x) for x in row])
+    return nums
+
+
+# ---------------------------
+# Main Program
+# ---------------------------
+if __name__ == "__main__":
+    print("🧩 8-Puzzle Solver using IDDFS")
+    start = take_input("\nEnter the START state:")
+    goal = take_input("\nEnter the GOAL state:")
+
+    print("\nStart State:")
+    print_board(start)
+    print("Goal State:")
+    print_board(goal)
+
+    max_depth = int(input("\nEnter maximum depth limit to search: "))
+
+    path = iddfs(start, goal, max_depth)
+
+    if path:
+        print("\n🔹 Solution Path (Step by Step):")
+        for step in path:
+            print_board(step)
+        print(f"Total Moves: {len(path)-1}")
+    else:
+        print("\nNo solution found within given depth.")
